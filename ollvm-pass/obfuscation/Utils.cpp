@@ -2,6 +2,8 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Config/llvm-config.h"
 
 // Shamefully borrowed from ../Scalar/RegToMem.cpp :(
 bool valueEscapes(Instruction *Inst) {
@@ -43,11 +45,19 @@ void fixStack(Function *f) {
       }
     }
     for (unsigned int i = 0; i != tmpReg.size(); ++i) {
-      DemoteRegToStack(*tmpReg.at(i), f->begin()->getTerminator());
+#if LLVM_VERSION_MAJOR >= 19
+      DemoteRegToStack(*tmpReg.at(i), false, f->begin()->getTerminator()->getIterator());
+#else
+      DemoteRegToStack(*tmpReg.at(i), false, f->begin()->getTerminator());
+#endif
     }
 
     for (unsigned int i = 0; i != tmpPhi.size(); ++i) {
+#if LLVM_VERSION_MAJOR >= 19
+      DemotePHIToStack(tmpPhi.at(i), f->begin()->getTerminator()->getIterator());
+#else
       DemotePHIToStack(tmpPhi.at(i), f->begin()->getTerminator());
+#endif
     }
 
   } while (tmpReg.size() != 0 || tmpPhi.size() != 0);

@@ -11,7 +11,7 @@ Out-of-tree llvm obfuscation pass，可在编译时对二进制进行混淆，�
 
 混淆插件提取自 [Arkari](https://github.com/KomiMoe/Arkari) 项目。
 
-> 注意：该项目当前仅在 windows x86 下测试，其他平台未测试
+> 支持 Windows (MSVC) 和 Linux (GNU) 平台编译
 
 ![effect.png](assets/effect.png)
 
@@ -28,7 +28,10 @@ rustup toolchain install nightly
 ```bash
 cargo new helloworld --bin
 cd helloworld
+# Windows
 cargo +nightly rustc --target x86_64-pc-windows-msvc --release -- -Zllvm-plugins="/path/to/LLVMObfuscationx.dll" -Cpasses="irobf(irobf-indbr,irobf-icall,irobf-indgv,irobf-cff,irobf-cse)"
+# Linux
+cargo +nightly rustc --target x86_64-unknown-linux-gnu --release -- -Zllvm-plugins="/path/to/LLVMObfuscationx.so" -Cpasses="irobf(irobf-indbr,irobf-icall,irobf-indgv,irobf-cff,irobf-cse)"
 ```
 
 ## opt 动态加载
@@ -38,16 +41,57 @@ cargo +nightly rustc --target x86_64-pc-windows-msvc --release -- -Zllvm-plugins
 clang -emit-llvm -c input.c -o input.bc
 
 # 使用 opt 工具加载和运行自定义 Pass
-opt -load-pass-plugin="/path/to/LLVMObfuscationx.dll" --passes="irobf(irobf-indbr,irobf-icall,irobf-indgv,irobf-cff,irobf-cse)" input.bc -o output.bc
+# Windows: LLVMObfuscationx.dll / Linux: LLVMObfuscationx.so
+opt -load-pass-plugin="/path/to/LLVMObfuscationx.so" --passes="irobf(irobf-indbr,irobf-icall,irobf-indgv,irobf-cff,irobf-cse)" input.bc -o output.bc
 
 # 将 IR 文件编译为目标文件
 llc -filetype=obj output.bc -o output.o
 
 # 链接目标文件生成可执行文件
-clang output.o -o output.exe
+clang output.o -o output
 ```
 
-## x86 msvc pass 编译方法
+## Linux GNU 编译方法
+
+### 环境及依赖安装
+
+```bash
+# Ubuntu/Debian
+apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    llvm-18-dev
+
+# 或者使用自行编译的 LLVM 18+
+```
+
+所需软件列表（用于 Docker 镜像构建）：
+- `build-essential` (gcc, g++, make)
+- `cmake` (>= 3.20)
+- `ninja-build`
+- `git`
+- `llvm-18-dev` (LLVM 18 开发库和头文件)
+
+### 编译
+
+```bash
+git clone --branch ollvm-pass https://github.com/chainreactors/ollvm-rust.git
+cd ollvm-rust
+cmake -G "Ninja" -S ./ollvm-pass -B ./build \
+    -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=ON \
+    -DLT_LLVM_INSTALL_DIR=/usr/lib/llvm-18
+cmake --build ./build -j$(nproc)
+```
+
+> `LT_LLVM_INSTALL_DIR` 需指定为自己的 LLVM 安装路径，apt 安装的 LLVM 18 通常在 `/usr/lib/llvm-18`
+
+编译产物为 `build/obfuscation/LLVMObfuscationx.so`
+
+## x86 msvc pass 编译方法 (Windows)
 
 ### 环境
 
@@ -61,7 +105,7 @@ clang output.o -o output.exe
 需在 `x64 Native Tools Command Prompt for VS 2022` 环境中执行，从开始菜单或者执行 `cmd.exe /k "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -startdir=none -arch=x64 -host_arch=x64` 进入：
 
 ```bash
-git clone --branch ollvm-pass https://github.com/0xlane/ollvm-rust.git
+git clone --branch ollvm-pass https://github.com/chainreactors/ollvm-rust.git
 cd ollvm-rust
 cmake -G "Ninja" -S .\ollvm-pass -B .\build -DCMAKE_CXX_STANDARD=17 -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLT_LLVM_INSTALL_DIR=D:\dev\rust_ollvm\llvm-build\llvm_x64
 cmake --build .\build\ -j12 # change 12 to yourself nproc

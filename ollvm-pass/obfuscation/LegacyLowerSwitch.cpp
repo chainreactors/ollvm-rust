@@ -13,6 +13,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "include/LegacyLowerSwitch.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -315,27 +316,39 @@ BasicBlock* LowerSwitch::newLeafBlock(CaseRange& Leaf, Value* Val,
   ICmpInst* Comp;
   if (Leaf.Low == Leaf.High) {
     // Make the seteq instruction...
-    Comp = new ICmpInst(*NewLeaf, ICmpInst::ICMP_EQ, Val,
+    Comp = new ICmpInst(ICmpInst::ICMP_EQ, Val,
                         Leaf.Low, "SwitchLeaf");
+    Comp->insertInto(NewLeaf, NewLeaf->end());
   } else {
     // Make range comparison
     if (Leaf.Low->isMinValue(true /*isSigned*/)) {
       // Val >= Min && Val <= Hi --> Val <= Hi
-      Comp = new ICmpInst(*NewLeaf, ICmpInst::ICMP_SLE, Val, Leaf.High,
+      Comp = new ICmpInst(ICmpInst::ICMP_SLE, Val, Leaf.High,
                           "SwitchLeaf");
+      Comp->insertInto(NewLeaf, NewLeaf->end());
     } else if (Leaf.Low->isZero()) {
       // Val >= 0 && Val <= Hi --> Val <=u Hi
-      Comp = new ICmpInst(*NewLeaf, ICmpInst::ICMP_ULE, Val, Leaf.High,
+      Comp = new ICmpInst(ICmpInst::ICMP_ULE, Val, Leaf.High,
                           "SwitchLeaf");
+      Comp->insertInto(NewLeaf, NewLeaf->end());
     } else {
       // Emit V-Lo <=u Hi-Lo
+#if LLVM_VERSION_MAJOR >= 20
+      Value* NegLo = BinaryOperator::CreateNeg(Leaf.Low, "", NewLeaf);
+      Instruction* Add = BinaryOperator::CreateAdd(Val, NegLo,
+                                                   Val->getName()+".off",
+                                                   NewLeaf);
+      Value *UpperBound = BinaryOperator::CreateAdd(NegLo, Leaf.High, "", NewLeaf);
+#else
       Constant* NegLo = ConstantExpr::getNeg(Leaf.Low);
       Instruction* Add = BinaryOperator::CreateAdd(Val, NegLo,
                                                    Val->getName()+".off",
                                                    NewLeaf);
       Constant *UpperBound = ConstantExpr::getAdd(NegLo, Leaf.High);
-      Comp = new ICmpInst(*NewLeaf, ICmpInst::ICMP_ULE, Add, UpperBound,
+#endif
+      Comp = new ICmpInst(ICmpInst::ICMP_ULE, Add, UpperBound,
                           "SwitchLeaf");
+      Comp->insertInto(NewLeaf, NewLeaf->end());
     }
   }
 

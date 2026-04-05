@@ -1,6 +1,8 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Config/llvm-config.h"
 #include "include/IndirectBranch.h"
 #include "include/ObfuscationOptions.h"
 #include "include/Utils.h"
@@ -72,7 +74,11 @@ struct IndirectBranch : public FunctionPass {
     // encrypt branch targets
     std::vector<Constant *> Elements;
     for (const auto BB:BBTargets) {
+#if LLVM_VERSION_MAJOR >= 20
+      Constant *CE = BlockAddress::get(BB);
+#else
       Constant *CE = ConstantExpr::getBitCast(BlockAddress::get(BB), PointerType::getUnqual(F.getContext()));
+#endif
       CE = ConstantExpr::getGetElementPtr(Type::getInt8Ty(F.getContext()), CE, EncKey);
       Elements.push_back(CE);
     }

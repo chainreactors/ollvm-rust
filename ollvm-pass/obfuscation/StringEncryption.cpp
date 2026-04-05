@@ -1,5 +1,9 @@
 #include "include/ObfuscationOptions.h"
 #include "include/StringEncryption.h"
+#include "llvm/Config/llvm-config.h"
+#if LLVM_VERSION_MAJOR >= 21
+#include "llvm/Support/ModRef.h"
+#endif
 #include "include/Utils.h"
 #include "llvm/Transforms/Utils/GlobalStatus.h"
 #include "llvm/Transforms/IPO/Attributor.h"
@@ -252,9 +256,17 @@ Function *StringEncryption::buildDecryptFunction(Module *M, const StringEncrypti
   Argument *Data = ArgIt;       // input
 
   PlainString->setName("plain_string");
+#if LLVM_VERSION_MAJOR >= 21
+  PlainString->addAttr(Attribute::getWithCaptureInfo(Ctx, CaptureInfo::none()));
+#else
   PlainString->addAttr(Attribute::NoCapture);
+#endif
   Data->setName("data");
+#if LLVM_VERSION_MAJOR >= 21
+  Data->addAttr(Attribute::getWithCaptureInfo(Ctx, CaptureInfo::none()));
+#else
   Data->addAttr(Attribute::NoCapture);
+#endif
   Data->addAttr(Attribute::ReadOnly);
 
   BasicBlock *Enter = BasicBlock::Create(Ctx, "Enter", DecFunc);
@@ -315,7 +327,11 @@ Function *StringEncryption::buildInitFunction(Module *M, const StringEncryption:
   Argument *thiz = ArgIt;
 
   thiz->setName("this");
+#if LLVM_VERSION_MAJOR >= 21
+  thiz->addAttr(Attribute::getWithCaptureInfo(Ctx, CaptureInfo::none()));
+#else
   thiz->addAttr(Attribute::NoCapture);
+#endif
 
   // convert constant initializer into a series of instructions
   BasicBlock *Enter = BasicBlock::Create(Ctx, "Enter", InitFunc);

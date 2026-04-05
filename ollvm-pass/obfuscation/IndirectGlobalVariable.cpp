@@ -1,6 +1,8 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Config/llvm-config.h"
 #include "include/IndirectGlobalVariable.h"
 #include "include/ObfuscationOptions.h"
 #include "include/Utils.h"
@@ -57,8 +59,12 @@ struct IndirectGlobalVariable : public FunctionPass {
 
     std::vector<Constant *> Elements;
     for (auto GVar:GlobalVariables) {
+#if LLVM_VERSION_MAJOR >= 20
+      Constant *CE = GVar;
+#else
       Constant *CE = ConstantExpr::getBitCast(
           GVar, PointerType::getUnqual(F.getContext()));
+#endif
       CE = ConstantExpr::getGetElementPtr(Type::getInt8Ty(F.getContext()), CE, EncKey);
       Elements.push_back(CE);
     }

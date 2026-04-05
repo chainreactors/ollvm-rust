@@ -1,5 +1,6 @@
 #include "include/ObfuscationPassManager.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
@@ -12,30 +13,26 @@ using namespace llvm;
 
 static cl::opt<bool>
     EnableIRObfusaction("irobf", cl::init(false), cl::NotHidden,
-                        cl::desc("Enable IR Code Obfuscation."),
-                        cl::ZeroOrMore);
+                        cl::desc("Enable IR Code Obfuscation."));
 static cl::opt<bool>
     EnableIndirectBr("irobf-indbr", cl::init(false), cl::NotHidden,
-                     cl::desc("Enable IR Indirect Branch Obfuscation."),
-                     cl::ZeroOrMore);
+                     cl::desc("Enable IR Indirect Branch Obfuscation."));
 
 static cl::opt<bool>
     EnableIndirectCall("irobf-icall", cl::init(false), cl::NotHidden,
-                       cl::desc("Enable IR Indirect Call Obfuscation."),
-                       cl::ZeroOrMore);
+                       cl::desc("Enable IR Indirect Call Obfuscation."));
 
 static cl::opt<bool> EnableIndirectGV(
     "irobf-indgv", cl::init(false), cl::NotHidden,
-    cl::desc("Enable IR Indirect Global Variable Obfuscation."),
-    cl::ZeroOrMore);
+    cl::desc("Enable IR Indirect Global Variable Obfuscation."));
 
 static cl::opt<bool> EnableIRFlattening(
     "irobf-cff", cl::init(false), cl::NotHidden,
-    cl::desc("Enable IR Control Flow Flattening Obfuscation."), cl::ZeroOrMore);
+    cl::desc("Enable IR Control Flow Flattening Obfuscation."));
 
 static cl::opt<bool>
     EnableIRStringEncryption("irobf-cse", cl::init(false), cl::NotHidden,
-                             cl::desc("Enable IR Constant String Encryption."), cl::ZeroOrMore);
+                             cl::desc("Enable IR Constant String Encryption."));
 
 static cl::opt<std::string> GoronConfigure("goron-cfg",
                                            cl::desc("Goron configuration file"),

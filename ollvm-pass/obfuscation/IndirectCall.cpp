@@ -1,5 +1,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Config/llvm-config.h"
 #include "include/IndirectCall.h"
 #include "include/ObfuscationOptions.h"
 #include "include/Utils.h"
@@ -68,8 +70,12 @@ struct IndirectCall : public FunctionPass {
     // callee's address
     std::vector<Constant *> Elements;
     for (auto Callee:Callees) {
+#if LLVM_VERSION_MAJOR >= 20
+      Constant *CE = Callee;
+#else
       Constant *CE = ConstantExpr::getBitCast(
           Callee, PointerType::getUnqual(F.getContext()));
+#endif
       CE = ConstantExpr::getGetElementPtr(Type::getInt8Ty(F.getContext()), CE, EncKey);
       Elements.push_back(CE);
     }
@@ -158,7 +164,11 @@ struct IndirectCall : public FunctionPass {
       Value *DestAddr = IRB.CreateGEP(Type::getInt8Ty(Ctx),
           EncDestAddr, Secret);
 
+#if LLVM_VERSION_MAJOR >= 20
+      Value *FnPtr = DestAddr;
+#else
       Value *FnPtr = IRB.CreateBitCast(DestAddr, FTy->getPointerTo());
+#endif
       FnPtr->setName("Call_" + Callee->getName());
       CB->setCalledOperand(FnPtr);
     }

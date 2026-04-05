@@ -17,6 +17,7 @@
 #include "include/Utils.h"
 #include "include/CryptoUtils.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Config/llvm-config.h"
 
 #define DEBUG_TYPE "flattening"
 
@@ -235,10 +236,14 @@ bool Flattening::flatten(Function *f) {
         }
       }
 
-      // numCase = MySecret - (MySecret - numCase)
-      // X = MySecret - numCase
+      // numCase = MySecret - (0 - numCase) = MySecret + numCase
+#if LLVM_VERSION_MAJOR >= 20
+      Value *NegNumCase = BinaryOperator::CreateNeg(numCase, "", i);
+      Value *newNumCase = BinaryOperator::Create(Instruction::Sub, MySecret, NegNumCase, "", i);
+#else
       Constant *X = ConstantExpr::getSub(Zero, numCase);
       Value *newNumCase = BinaryOperator::Create(Instruction::Sub, MySecret, X, "", i);
+#endif
 
       // Update switchVar and jump to the end of loop
       new StoreInst(newNumCase, load->getPointerOperand(), i);
@@ -283,11 +288,18 @@ bool Flattening::flatten(Function *f) {
         }
       }
 
+#if LLVM_VERSION_MAJOR >= 20
+      Value *NegTrue = BinaryOperator::CreateNeg(numCaseTrue, "", i->getTerminator());
+      Value *NegFalse = BinaryOperator::CreateNeg(numCaseFalse, "", i->getTerminator());
+      Value *newNumCaseTrue = BinaryOperator::Create(Instruction::Sub, MySecret, NegTrue, "", i->getTerminator());
+      Value *newNumCaseFalse = BinaryOperator::Create(Instruction::Sub, MySecret, NegFalse, "", i->getTerminator());
+#else
       Constant *X, *Y;
       X = ConstantExpr::getSub(Zero, numCaseTrue);
       Y = ConstantExpr::getSub(Zero, numCaseFalse);
       Value *newNumCaseTrue = BinaryOperator::Create(Instruction::Sub, MySecret, X, "", i->getTerminator());
       Value *newNumCaseFalse = BinaryOperator::Create(Instruction::Sub, MySecret, Y, "", i->getTerminator());
+#endif
 
       // Create a SelectInst
       BranchInst *br = cast<BranchInst>(i->getTerminator());
