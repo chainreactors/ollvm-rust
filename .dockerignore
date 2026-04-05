@@ -1,0 +1,6 @@
+build/
+target/
+.git/
+.vscode/
+*.md
+!README.md
