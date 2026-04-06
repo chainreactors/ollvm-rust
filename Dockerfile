@@ -29,7 +29,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build ca-certificates \
-        wget gnupg lsb-release libzstd-dev \
+        wget gnupg lsb-release libzstd-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Add LLVM apt repo (all versions share the same GPG key)
@@ -74,8 +74,8 @@ SHELL ["/bin/bash", "-c"]
 # System packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg lsb-release \
-        build-essential gcc-mingw-w64-x86-64 \
-        libzstd-dev \
+        build-essential gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 \
+        libzstd-dev protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # LLVM tools for all versions (opt, clang, lld)
@@ -122,7 +122,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
         echo "=== Installing ${nightly} ===" && \
         rustup toolchain install ${nightly} --profile minimal && \
         rustup target add --toolchain ${nightly} \
-            x86_64-pc-windows-gnu x86_64-pc-windows-msvc; \
+            x86_64-pc-windows-gnu x86_64-pc-windows-msvc \
+            i686-pc-windows-gnu i686-pc-windows-msvc; \
     done && \
     rustup default nightly-2025-03-15 && \
     echo "Installed toolchains:" && rustup toolchain list

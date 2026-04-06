@@ -1,0 +1,79 @@
+# Simplified test Dockerfile - LLVM 18 + Rust nightly-2024-03-15 (1.78)
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build ca-certificates \
+        wget gnupg lsb-release libzstd-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add LLVM 18 apt repo
+RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
+        gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] \
+        http://apt.llvm.org/$(lsb_release -cs)/ \
+        llvm-toolchain-$(lsb_release -cs)-18 main" \
+        > /etc/apt/sources.list.d/llvm.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends llvm-18-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY ollvm-pass/ /src/ollvm-pass/
+
+# Build .so for LLVM 18
+RUN cmake -G Ninja \
+        -S /src/ollvm-pass \
+        -B /build \
+        -DCMAKE_CXX_STANDARD=17 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DLT_LLVM_INSTALL_DIR=/usr/lib/llvm-18 && \
+    cmake --build /build -j"$(nproc)" && \
+    nm -D /build/obfuscation/libLLVMObfuscationx.so | grep -q llvmGetPassPluginInfo && \
+    mkdir -p /out && \
+    cp /build/obfuscation/libLLVMObfuscationx.so /out/libLLVMObfuscationx-18.so
+
+# ---------------------------------------------------------------------------
+# Runtime
+# ---------------------------------------------------------------------------
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-c"]
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl wget gnupg lsb-release \
+        build-essential libzstd-dev \
+        gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# LLVM 18 tools (opt, clang, lld)
+RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
+        gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] \
+        http://apt.llvm.org/$(lsb_release -cs)/ \
+        llvm-toolchain-$(lsb_release -cs)-18 main" \
+        > /etc/apt/sources.list.d/llvm.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends llvm-18 clang-18 lld-18 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy OLLVM pass plugin
+COPY --from=builder /out/ /usr/local/lib/ollvm/
+
+# Copy linker wrapper
+COPY docker/ollvm-rustc-linker.sh /usr/local/bin/ollvm-rustc-linker
+RUN chmod +x /usr/local/bin/ollvm-rustc-linker
+
+# Install Rust nightly-2024-03-15 (LLVM 18, rustc 1.78)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+        sh -s -- -y --default-toolchain nightly-2024-03-15 --profile minimal && \
+    . /root/.cargo/env && \
+    rustup target add x86_64-pc-windows-gnu i686-pc-windows-gnu && \
+    echo 'source /root/.cargo/env' >> /root/.bashrc
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+ENV OLLVM_PASSES="irobf(irobf-indbr)"
+
+WORKDIR /src
