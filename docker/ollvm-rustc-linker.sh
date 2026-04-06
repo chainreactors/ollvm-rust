@@ -1,25 +1,30 @@
 #!/bin/bash
 # ollvm-rustc-linker.sh — Universal OLLVM linker wrapper for Rust
 #
-# Works as -Clinker for ALL targets (Linux/Windows GNU/Windows MSVC).
-# Intercepts bitcode .o files, applies OLLVM pass, then delegates to the
-# correct real linker based on invocation style.
+# Auto-detects LLVM version from the active rustc toolchain, selects the
+# matching pass plugin and LLVM tools. Works for all targets:
+#   Linux ELF / Windows GNU / Windows MSVC
 #
 # Env vars:
-#   OLLVM_CRATE    — crate name to obfuscate (required, e.g. "my_app")
+#   OLLVM_CRATE    — crate name to obfuscate (required)
 #   OLLVM_PASSES   — pass pipeline (default: irobf(irobf-indbr))
-#   OLLVM_PLUGIN   — path to .so (default: /usr/local/lib/libLLVMObfuscationx.so)
-#   OLLVM_OPT      — opt binary (default: opt-${LLVM_VERSION})
-#   OLLVM_CLANG    — clang binary for ELF/GNU (default: clang-${LLVM_VERSION})
-#   OLLVM_LLD_LINK — lld-link binary for MSVC (default: lld-link-${LLVM_VERSION})
+#   OLLVM_PLUGIN   — override pass plugin path (auto-detected if unset)
+#   OLLVM_OPT      — override opt binary (auto-detected if unset)
+#   OLLVM_CLANG    — override clang binary (auto-detected if unset)
+#   OLLVM_LLD_LINK — override lld-link binary (auto-detected if unset)
 #   OLLVM_VERBOSE  — set to 1 for debug output
-#   LLVM_VERSION   — LLVM major version (default: 20)
+#   LLVM_VERSION   — override LLVM version (auto-detected from rustc if unset)
 
 set -eo pipefail
 
+# ── Auto-detect LLVM version from rustc ──
+if [ -z "${LLVM_VERSION:-}" ]; then
+    LLVM_VERSION=$(rustc --version --verbose 2>/dev/null | grep "LLVM version" | grep -oP '\d+' | head -1 || echo "")
+fi
 : "${LLVM_VERSION:=20}"
+
 : "${OLLVM_PASSES:=irobf(irobf-indbr)}"
-: "${OLLVM_PLUGIN:=/usr/local/lib/libLLVMObfuscationx.so}"
+: "${OLLVM_PLUGIN:=/usr/local/lib/ollvm/libLLVMObfuscationx-${LLVM_VERSION}.so}"
 : "${OLLVM_OPT:=opt-${LLVM_VERSION}}"
 : "${OLLVM_CLANG:=clang-${LLVM_VERSION}}"
 : "${OLLVM_LLD_LINK:=lld-link-${LLVM_VERSION}}"
@@ -28,7 +33,17 @@ set -eo pipefail
 
 log() { [ "$OLLVM_VERBOSE" = "1" ] && echo "[ollvm-linker] $*" >&2 || true; }
 
-# ── Step 1: Detect target type from arguments ──
+# ── Validate plugin exists ──
+if [ -n "${OLLVM_CRATE}" ] && [ ! -f "${OLLVM_PLUGIN}" ]; then
+    echo "[ollvm-linker] ERROR: plugin not found: ${OLLVM_PLUGIN}" >&2
+    echo "[ollvm-linker] Available plugins:" >&2
+    ls /usr/local/lib/ollvm/libLLVMObfuscationx-*.so 2>/dev/null | sed 's/^/  /' >&2
+    exit 1
+fi
+
+log "LLVM: ${LLVM_VERSION}, opt: ${OLLVM_OPT}, plugin: $(basename ${OLLVM_PLUGIN})"
+
+# ── Step 1: Detect target type ──
 IS_MSVC=false
 for arg in "$@"; do
     case "$arg" in
@@ -39,9 +54,8 @@ done
 
 log "target: $([ "$IS_MSVC" = true ] && echo MSVC || echo ELF/GNU)"
 log "crate: ${OLLVM_CRATE:-<none>}"
-log "passes: ${OLLVM_PASSES}"
 
-# ── Step 2: Find and obfuscate user crate bitcode ──
+# ── Step 2: Obfuscate matching bitcode ──
 if [ -n "${OLLVM_CRATE}" ]; then
     CRATE_PATTERN=$(echo "${OLLVM_CRATE}" | tr '-' '_')
 

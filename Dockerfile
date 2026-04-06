@@ -1,172 +1,167 @@
 # ============================================================================
-# ollvm-rust Docker image
+# ollvm-rust Docker image (all-in-one)
 #
-# Multi-stage build: compile OLLVM pass plugin, then assemble a Rust
-# cross-compilation environment with OLLVM support for three targets:
+# Contains OLLVM pass plugins for LLVM 17-21 and matching Rust toolchains.
+# The linker wrapper auto-detects the active Rust toolchain's LLVM version
+# and uses the correct pass plugin + opt binary.
+#
+# Supported targets:
 #   - x86_64-unknown-linux-gnu
 #   - x86_64-pc-windows-gnu
 #   - x86_64-pc-windows-msvc
 #
-# Build args:
-#   LLVM_VERSION  — LLVM major version (17-21, default: 20)
-#   RUST_VERSION  — Rust toolchain version (default: auto-selected to match LLVM)
-#   XWIN_VERSION  — xwin version for MSVC cross-compile (default: 0.6.5)
-#
 # Usage:
 #   docker build -t ollvm-rust .
-#   docker build -t ollvm-rust --build-arg LLVM_VERSION=21 --build-arg RUST_VERSION=1.90.0 .
+#
+#   # Use any installed Rust version:
+#   docker run --rm -v "$(pwd):/src" ollvm-rust bash -c '
+#     rustup default nightly-2025-03-15 &&
+#     OLLVM_CRATE=my_crate cargo build --release'
 #
 # ============================================================================
 
 # ---------------------------------------------------------------------------
-# Stage 1: Build the OLLVM pass plugin
+# Stage 1: Build OLLVM pass plugin for ALL LLVM versions
 # ---------------------------------------------------------------------------
 FROM ubuntu:22.04 AS builder
-
-ARG LLVM_VERSION=20
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake ninja-build git ca-certificates \
+        build-essential cmake ninja-build ca-certificates \
         wget gnupg lsb-release libzstd-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Add LLVM apt repo
+# Add LLVM apt repo (all versions share the same GPG key)
 RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
         gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] \
-        http://apt.llvm.org/$(lsb_release -cs)/ \
-        llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION} main" \
-        > /etc/apt/sources.list.d/llvm.list && \
+    for v in 17 18 19 20 21; do \
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] \
+            http://apt.llvm.org/$(lsb_release -cs)/ \
+            llvm-toolchain-$(lsb_release -cs)-${v} main"; \
+    done > /etc/apt/sources.list.d/llvm.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends llvm-${LLVM_VERSION}-dev && \
+    apt-get install -y --no-install-recommends \
+        llvm-17-dev llvm-18-dev llvm-19-dev llvm-20-dev llvm-21-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY ollvm-pass/ /src/ollvm-pass/
 
-RUN cmake -G Ninja \
-        -S /src/ollvm-pass \
-        -B /build \
-        -DCMAKE_CXX_STANDARD=17 \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_SHARED_LIBS=ON \
-        -DLT_LLVM_INSTALL_DIR=/usr/lib/llvm-${LLVM_VERSION} && \
-    cmake --build /build -j"$(nproc)" && \
-    # Verify symbol export
-    nm -D /build/obfuscation/libLLVMObfuscationx.so | grep -q llvmGetPassPluginInfo
+# Build .so for each LLVM version
+RUN for v in 17 18 19 20 21; do \
+        echo "=== Building for LLVM ${v} ===" && \
+        cmake -G Ninja \
+            -S /src/ollvm-pass \
+            -B /build-${v} \
+            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DLT_LLVM_INSTALL_DIR=/usr/lib/llvm-${v} && \
+        cmake --build /build-${v} -j"$(nproc)" && \
+        nm -D /build-${v}/obfuscation/libLLVMObfuscationx.so | grep -q llvmGetPassPluginInfo && \
+        mkdir -p /out && \
+        cp /build-${v}/obfuscation/libLLVMObfuscationx.so /out/libLLVMObfuscationx-${v}.so; \
+    done
 
 # ---------------------------------------------------------------------------
-# Stage 2: Runtime image with Rust + LLVM tools + OLLVM
+# Stage 2: Runtime image
 # ---------------------------------------------------------------------------
 FROM ubuntu:22.04
 
-ARG LLVM_VERSION=20
-# LLVM-to-Rust version mapping (pick a known-good version for each LLVM):
-#   LLVM 17 → 1.73.0,  LLVM 18 → 1.78.0,  LLVM 19 → 1.84.0
-#   LLVM 20 → 1.87.0,  LLVM 21 → 1.90.0
-ARG RUST_VERSION=""
-ARG XWIN_VERSION=0.6.5
-
 ENV DEBIAN_FRONTEND=noninteractive
-ENV LLVM_VERSION=${LLVM_VERSION}
-
-# Resolve Rust version from LLVM version if not specified
 SHELL ["/bin/bash", "-c"]
 
-# Install system packages + LLVM runtime tools
+# System packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg lsb-release \
         build-essential gcc-mingw-w64-x86-64 \
         libzstd-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Add LLVM apt repo and install tools (opt, clang, lld)
+# LLVM tools for all versions (opt, clang, lld)
 RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
         gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] \
-        http://apt.llvm.org/$(lsb_release -cs)/ \
-        llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION} main" \
-        > /etc/apt/sources.list.d/llvm.list && \
+    for v in 17 18 19 20 21; do \
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] \
+            http://apt.llvm.org/$(lsb_release -cs)/ \
+            llvm-toolchain-$(lsb_release -cs)-${v} main"; \
+    done > /etc/apt/sources.list.d/llvm.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        llvm-${LLVM_VERSION} \
-        clang-${LLVM_VERSION} \
-        lld-${LLVM_VERSION} && \
+        llvm-17 clang-17 lld-17 \
+        llvm-18 clang-18 lld-18 \
+        llvm-19 clang-19 lld-19 \
+        llvm-20 clang-20 lld-20 \
+        llvm-21 clang-21 lld-21 && \
     rm -rf /var/lib/apt/lists/*
 
-# Verify required LLVM tools exist
-RUN opt-${LLVM_VERSION} --version && \
-    clang-${LLVM_VERSION} --version && \
-    lld-link-${LLVM_VERSION} --version
-
-# Copy OLLVM pass plugin from builder
-COPY --from=builder /build/obfuscation/libLLVMObfuscationx.so /usr/local/lib/
+# Copy all OLLVM pass plugins
+COPY --from=builder /out/ /usr/local/lib/ollvm/
 
 # Copy linker wrapper
 COPY docker/ollvm-rustc-linker.sh /usr/local/bin/ollvm-rustc-linker
 RUN chmod +x /usr/local/bin/ollvm-rustc-linker
 
-# Install Rust (auto-select version matching LLVM if not specified)
-RUN if [ -z "${RUST_VERSION}" ]; then \
-        case "${LLVM_VERSION}" in \
-            17) RUST_VER=1.73.0 ;; \
-            18) RUST_VER=1.78.0 ;; \
-            19) RUST_VER=1.84.0 ;; \
-            20) RUST_VER=1.87.0 ;; \
-            21) RUST_VER=1.90.0 ;; \
-            *)  RUST_VER=1.87.0 ;; \
-        esac; \
-    else \
-        RUST_VER="${RUST_VERSION}"; \
-    fi && \
-    echo "Installing Rust ${RUST_VER} for LLVM ${LLVM_VERSION}" && \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-        sh -s -- -y --default-toolchain "${RUST_VER}" && \
+# Install Rust toolchains (one nightly per LLVM version)
+#   LLVM 17 → nightly-2023-09-18  (rustc 1.74.0)
+#   LLVM 18 → nightly-2024-03-15  (rustc 1.78.0)
+#   LLVM 19 → nightly-2024-09-15  (rustc 1.83.0)
+#   LLVM 20 → nightly-2025-03-15  (rustc 1.87.0)
+#   LLVM 21 → nightly-2025-08-15  (rustc 1.91.0)
+ARG DEFAULT_LLVM=20
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+        sh -s -- -y --default-toolchain none && \
     . /root/.cargo/env && \
-    rustup target add x86_64-pc-windows-gnu x86_64-pc-windows-msvc && \
-    # Verify LLVM version matches
-    RUST_LLVM=$(rustc --version --verbose | grep "LLVM version" | grep -oP '\d+' | head -1) && \
-    echo "Rust LLVM: ${RUST_LLVM}, Target LLVM: ${LLVM_VERSION}" && \
-    if [ "${RUST_LLVM}" != "${LLVM_VERSION}" ]; then \
-        echo "WARNING: Rust uses LLVM ${RUST_LLVM} but pass is built for LLVM ${LLVM_VERSION}"; \
-    fi
+    for nightly in \
+        nightly-2023-09-18 \
+        nightly-2024-03-15 \
+        nightly-2024-09-15 \
+        nightly-2025-03-15 \
+        nightly-2025-08-15; \
+    do \
+        echo "=== Installing ${nightly} ===" && \
+        rustup toolchain install ${nightly} --profile minimal && \
+        rustup target add --toolchain ${nightly} \
+            x86_64-pc-windows-gnu x86_64-pc-windows-msvc; \
+    done && \
+    rustup default nightly-2025-03-15 && \
+    echo "Installed toolchains:" && rustup toolchain list
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install xwin for MSVC cross-compilation
+ARG XWIN_VERSION=0.6.5
 RUN cargo install xwin --version "=${XWIN_VERSION}" --locked && \
     xwin --accept-license splat --output /opt/xwin && \
     rm -rf /root/.cargo/registry /root/.cargo/git /tmp/*
 
-# Set default env
-ENV OLLVM_PLUGIN=/usr/local/lib/libLLVMObfuscationx.so
+# Default env
 ENV OLLVM_PASSES="irobf(irobf-indbr)"
 
 WORKDIR /src
 
 # ---------------------------------------------------------------------------
-# Usage examples (run from host):
+# Usage:
 #
-# Build image:
+# Build:
 #   docker build -t ollvm-rust .
 #
-# Linux target:
+# Use default Rust (LLVM 20):
 #   docker run --rm -v "$(pwd):/src" ollvm-rust bash -c '
 #     OLLVM_CRATE=my_crate \
 #     RUSTFLAGS="-Clinker-plugin-lto -Clinker=ollvm-rustc-linker \
-#       -Clink-arg=-fuse-ld=lld-'${LLVM_VERSION}'" \
+#       -Clink-arg=-fuse-ld=lld-20" \
 #     cargo build --release'
 #
-# Windows GNU target:
+# Switch Rust/LLVM version:
 #   docker run --rm -v "$(pwd):/src" ollvm-rust bash -c '
+#     rustup default nightly-2024-09-15 && \
 #     OLLVM_CRATE=my_crate \
 #     RUSTFLAGS="-Clinker-plugin-lto -Clinker=ollvm-rustc-linker \
-#       -Clink-arg=--target=x86_64-w64-windows-gnu \
-#       -Clink-arg=-fuse-ld=lld-'${LLVM_VERSION}'" \
-#     cargo build --release --target x86_64-pc-windows-gnu'
+#       -Clink-arg=-fuse-ld=lld-19" \
+#     cargo build --release'
 #
-# Windows MSVC target:
+# Windows MSVC:
 #   docker run --rm -v "$(pwd):/src" ollvm-rust bash -c '
 #     OLLVM_CRATE=my_crate \
 #     RUSTFLAGS="-Clinker-plugin-lto -Clinker=ollvm-rustc-linker \
