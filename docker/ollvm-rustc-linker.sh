@@ -1,19 +1,16 @@
 #!/bin/bash
 # ollvm-rustc-linker.sh — Universal OLLVM linker wrapper for Rust
 #
-# Auto-detects LLVM version from the active rustc toolchain, selects the
-# matching pass plugin and LLVM tools. Works for all targets:
-#   Linux ELF / Windows GNU / Windows MSVC
+# Auto-detects LLVM version from active rustc, selects matching pass plugin
+# and LLVM tools. No manual version numbers needed.
 #
 # Env vars:
 #   OLLVM_CRATE    — crate name to obfuscate (required)
 #   OLLVM_PASSES   — pass pipeline (default: irobf(irobf-indbr))
-#   OLLVM_PLUGIN   — override pass plugin path (auto-detected if unset)
-#   OLLVM_OPT      — override opt binary (auto-detected if unset)
-#   OLLVM_CLANG    — override clang binary (auto-detected if unset)
-#   OLLVM_LLD_LINK — override lld-link binary (auto-detected if unset)
 #   OLLVM_VERBOSE  — set to 1 for debug output
 #   LLVM_VERSION   — override LLVM version (auto-detected from rustc if unset)
+#   OLLVM_PLUGIN   — override plugin path (auto-detected if unset)
+#   OLLVM_OPT      — override opt binary (auto-detected if unset)
 
 set -eo pipefail
 
@@ -26,22 +23,24 @@ fi
 : "${OLLVM_PASSES:=irobf(irobf-indbr)}"
 : "${OLLVM_PLUGIN:=/usr/local/lib/ollvm/libLLVMObfuscationx-${LLVM_VERSION}.so}"
 : "${OLLVM_OPT:=opt-${LLVM_VERSION}}"
-: "${OLLVM_CLANG:=clang-${LLVM_VERSION}}"
-: "${OLLVM_LLD_LINK:=lld-link-${LLVM_VERSION}}"
 : "${OLLVM_CRATE:=}"
 : "${OLLVM_VERBOSE:=0}"
+
+CLANG="clang-${LLVM_VERSION}"
+LLD_LINK="lld-link-${LLVM_VERSION}"
 
 log() { [ "$OLLVM_VERBOSE" = "1" ] && echo "[ollvm-linker] $*" >&2 || true; }
 
 # ── Validate plugin exists ──
 if [ -n "${OLLVM_CRATE}" ] && [ ! -f "${OLLVM_PLUGIN}" ]; then
     echo "[ollvm-linker] ERROR: plugin not found: ${OLLVM_PLUGIN}" >&2
-    echo "[ollvm-linker] Available plugins:" >&2
+    echo "[ollvm-linker] Available:" >&2
     ls /usr/local/lib/ollvm/libLLVMObfuscationx-*.so 2>/dev/null | sed 's/^/  /' >&2
     exit 1
 fi
 
-log "LLVM: ${LLVM_VERSION}, opt: ${OLLVM_OPT}, plugin: $(basename ${OLLVM_PLUGIN})"
+log "LLVM ${LLVM_VERSION} | opt: ${OLLVM_OPT} | plugin: $(basename ${OLLVM_PLUGIN})"
+log "passes: ${OLLVM_PASSES}"
 
 # ── Step 1: Detect target type ──
 IS_MSVC=false
@@ -81,9 +80,20 @@ fi
 
 # ── Step 3: Delegate to real linker ──
 if [ "$IS_MSVC" = true ]; then
-    log "exec: ${OLLVM_LLD_LINK} ..."
-    exec "${OLLVM_LLD_LINK}" "$@"
+    log "exec: ${LLD_LINK} $*"
+    exec "${LLD_LINK}" "$@"
 else
-    log "exec: ${OLLVM_CLANG} ..."
-    exec "${OLLVM_CLANG}" "$@"
+    # Auto-inject -fuse-ld=lld-XX unless user already specified one
+    HAS_FUSE_LD=false
+    for arg in "$@"; do
+        case "$arg" in -fuse-ld=*) HAS_FUSE_LD=true; break ;; esac
+    done
+
+    if [ "$HAS_FUSE_LD" = false ]; then
+        log "exec: ${CLANG} -fuse-ld=lld-${LLVM_VERSION} $*"
+        exec "${CLANG}" -fuse-ld="lld-${LLVM_VERSION}" "$@"
+    else
+        log "exec: ${CLANG} $*"
+        exec "${CLANG}" "$@"
+    fi
 fi

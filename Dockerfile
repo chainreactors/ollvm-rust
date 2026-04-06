@@ -143,25 +143,31 @@ WORKDIR /src
 # ---------------------------------------------------------------------------
 # Usage:
 #
-# Build:
+# Build image:
 #   docker build -t ollvm-rust .
 #
-# Use default Rust (LLVM 20):
+# ── Linux (default: LLVM 20 / Rust 1.87) ──
+#   docker run --rm -v "$(pwd):/src" ollvm-rust bash -c '
+#     OLLVM_CRATE=my_crate \
+#     OLLVM_PASSES="irobf(irobf-indbr,irobf-icall,irobf-indgv)" \
+#     RUSTFLAGS="-Clinker-plugin-lto -Clinker=ollvm-rustc-linker" \
+#     cargo build --release'
+#
+# ── Switch Rust/LLVM version (everything auto-adapts) ──
+#   docker run --rm -v "$(pwd):/src" ollvm-rust bash -c '
+#     rustup default nightly-2024-09-15 &&
+#     OLLVM_CRATE=my_crate \
+#     RUSTFLAGS="-Clinker-plugin-lto -Clinker=ollvm-rustc-linker" \
+#     cargo build --release'
+#
+# ── Windows GNU ──
 #   docker run --rm -v "$(pwd):/src" ollvm-rust bash -c '
 #     OLLVM_CRATE=my_crate \
 #     RUSTFLAGS="-Clinker-plugin-lto -Clinker=ollvm-rustc-linker \
-#       -Clink-arg=-fuse-ld=lld-20" \
-#     cargo build --release'
+#       -Clink-arg=--target=x86_64-w64-windows-gnu" \
+#     cargo build --release --target x86_64-pc-windows-gnu'
 #
-# Switch Rust/LLVM version:
-#   docker run --rm -v "$(pwd):/src" ollvm-rust bash -c '
-#     rustup default nightly-2024-09-15 && \
-#     OLLVM_CRATE=my_crate \
-#     RUSTFLAGS="-Clinker-plugin-lto -Clinker=ollvm-rustc-linker \
-#       -Clink-arg=-fuse-ld=lld-19" \
-#     cargo build --release'
-#
-# Windows MSVC:
+# ── Windows MSVC ──
 #   docker run --rm -v "$(pwd):/src" ollvm-rust bash -c '
 #     OLLVM_CRATE=my_crate \
 #     RUSTFLAGS="-Clinker-plugin-lto -Clinker=ollvm-rustc-linker \
@@ -169,4 +175,16 @@ WORKDIR /src
 #       -Clink-arg=/libpath:/opt/xwin/sdk/lib/um/x86_64 \
 #       -Clink-arg=/libpath:/opt/xwin/sdk/lib/ucrt/x86_64" \
 #     cargo build --release --target x86_64-pc-windows-msvc'
+#
+# Available nightly toolchains:
+#   nightly-2023-09-18  →  LLVM 17  (Rust 1.74)
+#   nightly-2024-03-15  →  LLVM 18  (Rust 1.78)
+#   nightly-2024-09-15  →  LLVM 19  (Rust 1.83)
+#   nightly-2025-03-15  →  LLVM 20  (Rust 1.87)  ← default
+#   nightly-2025-08-15  →  LLVM 21  (Rust 1.91)
+#
+# Env vars:
+#   OLLVM_CRATE   — crate name to obfuscate (required)
+#   OLLVM_PASSES  — pass pipeline (default: irobf(irobf-indbr))
+#   OLLVM_VERBOSE — set to 1 for debug output
 # ---------------------------------------------------------------------------
